@@ -80,7 +80,8 @@ const main = async () => {
       return Buffer.from(JSON.stringify({ error: 'Auction for this item already exists' }), 'utf-8');
     }
 
-    auctions[item] = { price, highestBid: null, closed: false };
+    // Store auction details, including the creator's clientName
+    auctions[item] = { price, highestBid: null, closed: false, creator: clientName };
 
     console.log(`${clientName} opens auction: sell ${item} for ${price} USDt`);
 
@@ -116,6 +117,11 @@ const main = async () => {
 
     if (!auctions[item] || auctions[item].closed) {
       return Buffer.from(JSON.stringify({ error: 'Auction not available or already closed' }), 'utf-8');
+    }
+
+    // Check if the client trying to close the auction is the creator
+    if (auctions[item].creator !== clientName) {
+      return Buffer.from(JSON.stringify({ error: 'Only the auction creator can close it' }), 'utf-8');
     }
 
     auctions[item].closed = true;
