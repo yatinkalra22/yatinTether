@@ -80,8 +80,13 @@ const main = async () => {
       return Buffer.from(JSON.stringify({ error: 'Auction for this item already exists' }), 'utf-8');
     }
 
-    // Store auction details, including the creator's clientName
-    auctions[item] = { price, highestBid: null, closed: false, creator: clientName };
+    // Store the creator's public key
+    auctions[item] = {
+      price,
+      highestBid: null,
+      closed: false,
+      creator: peerPublicKey.toString('hex'),
+    };
 
     console.log(`${clientName} opens auction: sell ${item} for ${price} USDt`);
 
@@ -105,6 +110,8 @@ const main = async () => {
       console.log(`${clientName} makes bid for ${item}: ${amount} USDt`);
 
       await notifyPeers('newBid', { item, bidder: clientName, amount }, peerPublicKey);
+    } else {
+      return Buffer.from(JSON.stringify({ error: 'Bid amount is too low' }), 'utf-8');
     }
 
     return Buffer.from(JSON.stringify({ status: 'Bid placed', item, amount }), 'utf-8');
@@ -119,9 +126,12 @@ const main = async () => {
       return Buffer.from(JSON.stringify({ error: 'Auction not available or already closed' }), 'utf-8');
     }
 
-    // Check if the client trying to close the auction is the creator
-    if (auctions[item].creator !== clientName) {
-      return Buffer.from(JSON.stringify({ error: 'Only the auction creator can close it' }), 'utf-8');
+    // Verify that the requester is the creator of the auction
+    const requesterKey = peerPublicKey.toString('hex');
+    const auctionCreator = auctions[item].creator;
+
+    if (requesterKey !== auctionCreator) {
+      return Buffer.from(JSON.stringify({ error: 'Only the creator can close this auction' }), 'utf-8');
     }
 
     auctions[item].closed = true;
