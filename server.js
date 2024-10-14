@@ -16,37 +16,63 @@ const main = async () => {
   const db = new Hyperbee(core, { keyEncoding: 'utf-8', valueEncoding: 'json' });
   await db.ready();
 
+  const keyPair = DHT.keyPair(crypto.randomBytes(32));
   const dht = new DHT({
-    keyPair: DHT.keyPair(crypto.randomBytes(32)),
+    keyPair,
     bootstrap: [{ host: '127.0.0.1', port: 30001 }],
   });
 
   const rpc = new RPC({ dht });
   const rpcServer = rpc.createServer();
 
-  const peers = [];
+  const peers = new Map(); 
   const auctions = {};
   const bids = {};
 
-  const addPeer = (peer) => {
-    if (!peers.includes(peer)) {
-      peers.push(peer);
-      console.log(`Peer added: ${peer.toString('hex')}`);
+  const addPeer = (peerPublicKey) => {
+    // Prevent adding the server itself as a peer
+    if (peerPublicKey.equals(rpcServer.publicKey)) {
+      console.log('Attempted to add self as peer. Ignoring.');
+      return;
+    }
+
+    const peerHex = peerPublicKey.toString('hex');
+    if (!peers.has(peerHex)) {
+      peers.set(peerHex, { peerPublicKey, connected: true });
+      console.log(`Peer added: ${peerHex}`);
     }
   };
 
-  const notifyPeers = async (action, data) => {
-    for (const peer of peers) {
+  const notifyPeers = async (action, data, excludePeer = null) => {
+    for (const [peerKey, { peerPublicKey, connected }] of peers.entries()) {
+      if (excludePeer && peerKey === excludePeer.toString('hex')) continue;
+
+      if (!connected) {
+        console.warn(`Skipping peer ${peerKey} as the channel is closed`);
+        continue;
+      }
+
       try {
-        await rpc.request(peer, action, Buffer.from(JSON.stringify(data), 'utf-8'));
+        await rpc.request(peerPublicKey, action, Buffer.from(JSON.stringify(data), 'utf-8'));
       } catch (error) {
-        console.error(`Failed to notify peer ${peer.toString('hex')}:`, error);
+        if (error.code === 'CHANNEL_CLOSED') {
+          console.warn(`Failed to notify peer ${peerKey}: ${error.message}`);
+          peers.delete(peerKey); // Remove the disconnected peer
+        } else {
+          console.error(`Error notifying peer ${peerKey}:`, error);
+        }
       }
     }
   };
 
+  rpcServer.respond('addPeer', async (rawRequest) => {
+    const request = JSON.parse(rawRequest.toString());
+    addPeer(Buffer.from(request.clientPublicKey, 'hex')); // Ensure the public key is added as a buffer
+    return Buffer.from('OK');
+  });
+
   // Handler for creating an auction
-  rpcServer.respond('openAuction', async (rawRequest) => {
+  rpcServer.respond('openAuction', async (rawRequest, peerPublicKey) => {
     const request = JSON.parse(rawRequest.toString());
     const { item, price, clientName } = request;
 
@@ -58,15 +84,15 @@ const main = async () => {
 
     console.log(`${clientName} opens auction: sell ${item} for ${price} USDt`);
 
-    await notifyPeers('newAuction', { item, price, clientName });
+    await notifyPeers('newAuction', { item, price, clientName }, peerPublicKey);
 
     return Buffer.from(JSON.stringify({ status: 'Auction opened', item }), 'utf-8');
   });
 
   // Handler for making a bid
-  rpcServer.respond('makeBid', async (rawRequest) => {
+  rpcServer.respond('makeBid', async (rawRequest, peerPublicKey) => {
     const request = JSON.parse(rawRequest.toString());
-    const { item, bidder, amount } = request;
+    const { item, clientName, amount } = request;
 
     if (!auctions[item] || auctions[item].closed) {
       return Buffer.from(JSON.stringify({ error: 'Auction not available' }), 'utf-8');
@@ -74,17 +100,17 @@ const main = async () => {
 
     const auction = auctions[item];
     if (!auction.highestBid || amount > auction.highestBid.amount) {
-      auction.highestBid = { bidder, amount };
-      console.log(`${bidder} makes bid for ${item}: ${amount} USDt`);
+      auction.highestBid = { bidder: clientName, amount };
+      console.log(`${clientName} makes bid for ${item}: ${amount} USDt`);
 
-      await notifyPeers('newBid', { item, bidder, amount });
+      await notifyPeers('newBid', { item, bidder: clientName, amount }, peerPublicKey);
     }
 
     return Buffer.from(JSON.stringify({ status: 'Bid placed', item, amount }), 'utf-8');
   });
 
   // Handler for closing the auction
-  rpcServer.respond('closeAuction', async (rawRequest) => {
+  rpcServer.respond('closeAuction', async (rawRequest, peerPublicKey) => {
     const request = JSON.parse(rawRequest.toString());
     const { item, clientName } = request;
 
@@ -98,7 +124,7 @@ const main = async () => {
 
     console.log(`${clientName} closes auction ${item}. Winner: ${winner}, Amount: ${amount} USDt`);
 
-    await notifyPeers('auctionClosed', { item, winner, amount, clientName });
+    await notifyPeers('auctionClosed', { item, winner, amount, clientName }, peerPublicKey);
 
     return Buffer.from(
       JSON.stringify({ status: 'Auction closed', winner, amount }),
