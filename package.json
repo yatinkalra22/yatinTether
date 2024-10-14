@@ -1,0 +1,27 @@
+{
+  "name": "yatintether",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yatinkalra22/yatinTether.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/yatinkalra22/yatinTether/issues"
+  },
+  "homepage": "https://github.com/yatinkalra22/yatinTether#readme",
+  "dependencies": {
+    "@hyperswarm/rpc": "^3.3.2",
+    "crypto": "^1.0.1",
+    "hyperbee": "^2.20.2",
+    "hypercore": "^10.37.25",
+    "hyperdht": "^6.19.0"
+  }
+}
