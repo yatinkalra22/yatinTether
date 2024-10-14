@@ -9,14 +9,13 @@ const path = require('path');
 
 // Initialize auction system
 const main = async () => {
-  const clientName = process.argv[2] || `client-${Date.now()}`; 
+  const clientName = process.argv[2] || `client-${Date.now()}`;
   const dbPath = path.join('./auction-db', clientName);
 
   const core = new Hypercore(dbPath);
   const db = new Hyperbee(core, { keyEncoding: 'utf-8', valueEncoding: 'json' });
   await db.ready();
 
-  // Distributed hash table
   const dht = new DHT({
     keyPair: DHT.keyPair(crypto.randomBytes(32)),
     bootstrap: [{ host: '127.0.0.1', port: 30001 }],
@@ -26,11 +25,9 @@ const main = async () => {
   const rpcServer = rpc.createServer();
 
   const peers = [];
-
   const auctions = {};
   const bids = {};
 
-  // Add a peer to the network
   const addPeer = (peer) => {
     if (!peers.includes(peer)) {
       peers.push(peer);
@@ -48,56 +45,60 @@ const main = async () => {
     }
   };
 
+  // Handler for creating an auction
   rpcServer.respond('openAuction', async (rawRequest) => {
     const request = JSON.parse(rawRequest.toString());
-    const { auctionId, item, price, clientName } = request;
+    const { item, price, clientName } = request;
 
-    auctions[auctionId] = { item, price, highestBid: null, closed: false };
+    if (auctions[item]) {
+      return Buffer.from(JSON.stringify({ error: 'Auction for this item already exists' }), 'utf-8');
+    }
+
+    auctions[item] = { price, highestBid: null, closed: false };
+
     console.log(`${clientName} opens auction: sell ${item} for ${price} USDt`);
 
-    await notifyPeers('newAuction', { auctionId, item, price, clientName });
+    await notifyPeers('newAuction', { item, price, clientName });
 
-    return Buffer.from(JSON.stringify({ status: 'Auction opened', auctionId }), 'utf-8');
+    return Buffer.from(JSON.stringify({ status: 'Auction opened', item }), 'utf-8');
   });
 
   // Handler for making a bid
   rpcServer.respond('makeBid', async (rawRequest) => {
     const request = JSON.parse(rawRequest.toString());
-    const { auctionId, bidder, amount } = request;
+    const { item, bidder, amount } = request;
 
-    if (!auctions[auctionId] || auctions[auctionId].closed) {
+    if (!auctions[item] || auctions[item].closed) {
       return Buffer.from(JSON.stringify({ error: 'Auction not available' }), 'utf-8');
     }
 
-    const auction = auctions[auctionId];
+    const auction = auctions[item];
     if (!auction.highestBid || amount > auction.highestBid.amount) {
       auction.highestBid = { bidder, amount };
-      console.log(`${bidder} makes bid for ${auctionId}: ${amount} USDt`);
+      console.log(`${bidder} makes bid for ${item}: ${amount} USDt`);
 
-      // Notify peers of the new bid
-      await notifyPeers('newBid', { auctionId, bidder, amount });
+      await notifyPeers('newBid', { item, bidder, amount });
     }
 
-    return Buffer.from(JSON.stringify({ status: 'Bid placed', auctionId, amount }), 'utf-8');
+    return Buffer.from(JSON.stringify({ status: 'Bid placed', item, amount }), 'utf-8');
   });
 
   // Handler for closing the auction
   rpcServer.respond('closeAuction', async (rawRequest) => {
     const request = JSON.parse(rawRequest.toString());
-    const { auctionId, clientName } = request;
+    const { item, clientName } = request;
 
-    if (!auctions[auctionId] || auctions[auctionId].closed) {
+    if (!auctions[item] || auctions[item].closed) {
       return Buffer.from(JSON.stringify({ error: 'Auction not available or already closed' }), 'utf-8');
     }
 
-    auctions[auctionId].closed = true;
-    const winner = auctions[auctionId].highestBid ? auctions[auctionId].highestBid.bidder : 'No Winner';
-    const amount = auctions[auctionId].highestBid ? auctions[auctionId].highestBid.amount : 0;
+    auctions[item].closed = true;
+    const winner = auctions[item].highestBid ? auctions[item].highestBid.bidder : 'No Winner';
+    const amount = auctions[item].highestBid ? auctions[item].highestBid.amount : 0;
 
-    console.log(`${clientName} closes auction ${auctionId}. Winner: ${winner}, Amount: ${amount} USDt`);
+    console.log(`${clientName} closes auction ${item}. Winner: ${winner}, Amount: ${amount} USDt`);
 
-    // Notify peers
-    await notifyPeers('auctionClosed', { auctionId, winner, amount, clientName });
+    await notifyPeers('auctionClosed', { item, winner, amount, clientName });
 
     return Buffer.from(
       JSON.stringify({ status: 'Auction closed', winner, amount }),
@@ -105,28 +106,24 @@ const main = async () => {
     );
   });
 
-  // Listener for new auction updates from peers
   rpcServer.respond('newAuction', async (rawData) => {
     const data = JSON.parse(rawData.toString());
     console.log(`${data.clientName} opens auction: sell ${data.item} for ${data.price} USDt`);
     return Buffer.from('OK');
   });
 
-  // Listener for new bid updates from peers
   rpcServer.respond('newBid', async (rawData) => {
     const data = JSON.parse(rawData.toString());
-    console.log(`${data.clientName} makes bid for ${data.auctionId}: ${data.amount} USDt`);
+    console.log(`${data.clientName} makes bid for ${data.item}: ${data.amount} USDt`);
     return Buffer.from('OK');
   });
 
-  // Listener for auction closed updates from peers
   rpcServer.respond('auctionClosed', async (rawData) => {
     const data = JSON.parse(rawData.toString());
-    console.log(`${data.clientName} closes auction ${data.auctionId}. Winner: ${data.winner} with ${data.amount} USDt`);
+    console.log(`${data.clientName} closes auction ${data.item}. Winner: ${data.winner} with ${data.amount} USDt`);
     return Buffer.from('OK');
   });
 
-  // Listen on the RPC server
   await rpcServer.listen();
   console.log(`RPC server running with public key: ${rpcServer.publicKey.toString('hex')}`);
 };

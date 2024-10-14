@@ -28,7 +28,6 @@ const main = async () => {
     });
   };
 
-  
   const initializeClient = async () => {
     clientName = await askQuestion('Enter your unique name (e.g., Client#1): ');
     console.log(`Welcome, ${clientName}!`);
@@ -39,10 +38,9 @@ const main = async () => {
     serverPublicKey = Buffer.from(serverKeyInput, 'hex');
   };
 
-
   const startListeningForUpdates = async () => {
     const listener = rpc.createServer();
-    
+
     listener.respond('newAuction', async (rawData) => {
       const data = JSON.parse(rawData.toString());
       console.log(`${data.clientName} opens auction: sell ${data.item} for ${data.price} USDt`);
@@ -51,17 +49,18 @@ const main = async () => {
 
     listener.respond('newBid', async (rawData) => {
       const data = JSON.parse(rawData.toString());
-      console.log(`${data.clientName} makes bid for ${data.auctionId}: ${data.amount} USDt`);
+      console.log(`${data.clientName} makes bid for ${data.item}: ${data.amount} USDt`);
       return Buffer.from('OK');
     });
 
     listener.respond('auctionClosed', async (rawData) => {
       const data = JSON.parse(rawData.toString());
-      console.log(`${data.clientName} closes auction ${data.auctionId}. Winner: ${data.winner} with ${data.amount} USDt`);
+      console.log(`${data.clientName} closes auction ${data.item}. Winner: ${data.winner} with ${data.amount} USDt`);
       return Buffer.from('OK');
     });
 
-    await listener.listen(); 
+    await listener.listen();
+    console.log('Client is listening for updates from peers...');
   };
 
   const getAction = async () => {
@@ -73,21 +72,20 @@ const main = async () => {
     let payload;
     switch (action) {
       case 'openAuction':
-        const auctionId = await askQuestion('Enter auction ID: ');
         const item = await askQuestion('Enter item name: ');
         const price = await askQuestion('Enter starting price (USDt): ');
-        payload = { clientName, auctionId, item, price: Number(price) };
+        payload = { clientName, item, price: Number(price) };
         break;
 
       case 'makeBid':
-        const bidAuctionId = await askQuestion('Enter auction ID to bid on: ');
+        const bidItem = await askQuestion('Enter item name to bid on: ');
         const amount = await askQuestion('Enter bid amount (USDt): ');
-        payload = { clientName, auctionId: bidAuctionId, amount: Number(amount) };
+        payload = { clientName, item: bidItem, amount: Number(amount) };
         break;
 
       case 'closeAuction':
-        const closeAuctionId = await askQuestion('Enter auction ID to close: ');
-        payload = { clientName, auctionId: closeAuctionId };
+        const closeItem = await askQuestion('Enter item name to close: ');
+        payload = { clientName, item: closeItem };
         break;
 
       default:
@@ -97,34 +95,30 @@ const main = async () => {
     return payload;
   };
 
-  // Send the payload to the server based on action
   const sendRequest = async (action, payload) => {
     const request = Buffer.from(JSON.stringify(payload), 'utf-8');
     const response = await rpc.request(serverPublicKey, action, request);
     console.log('Response:', response.toString('utf-8'));
   };
 
-  // Notify all peers about an update
   const notifyPeers = async (action, data) => {
     const request = Buffer.from(JSON.stringify(data), 'utf-8');
     await rpc.request(serverPublicKey, action, request);
   };
 
-  // Main logic
   await initializeClient();
-  await getServerPublicKey(); 
+  await getServerPublicKey();
   await startListeningForUpdates();
 
   while (true) {
-    const action = await getAction(); 
+    const action = await getAction();
 
     if (['openAuction', 'makeBid', 'closeAuction'].includes(action)) {
       const payload = await getDetailsForAction(action);
 
       if (payload) {
-        await sendRequest(action, payload); 
+        await sendRequest(action, payload);
 
-        // Notify other clients
         if (action === 'openAuction') {
           await notifyPeers('newAuction', payload);
         } else if (action === 'makeBid') {
