@@ -19,7 +19,7 @@ This is a decentralized peer-to-peer (P2P) auction system built using Hyperswarm
 1. Clone this repository:
    ```bash
    git clone <repository-url>
-   cd p2p-auction-system
+   cd yatinTether
    ```
 2. Install the required dependencies:
    ```bash
